@@ -8,7 +8,7 @@ messages=[
             {"role": "system", "content": "You are a helpful assistant."}
             ]
 
-def speech_to_text(audio):
+def speech_to_text(audio_file):
     '''Transcribe an audio file to text using OpenAI's whisper model.
 
     Args:
@@ -18,9 +18,17 @@ def speech_to_text(audio):
         str: The transcribed text.
 
     '''
-    audio_file = open(audio, "rb")
-    transcript = openai.Audio.transcribe('whisper-1', audio_file)
-    return transcript['text']
+
+    if audio_file is None:
+        return "No audio detected. Please try again."
+
+    with open(audio_file, "rb") as file:
+        transcription = openai.audio.transcriptions.create(
+            model="whisper-1",
+            file=file
+        )
+
+    return transcription.text
 
 def query_ChatGPT(messages):
     '''Send messages to OpenAI's Chat GPT-3 model and get response.
@@ -32,8 +40,8 @@ def query_ChatGPT(messages):
         str: The response message from the model.
 
     '''
-    response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+    response = openai.chat.completions.create(
+        model="gpt-4o-mini",
         messages=messages
         )
     response_message = response['choices'][0]['message']['content']
@@ -68,6 +76,10 @@ def greet(audio):
 
     return chat_transcript
 
-demo = gr.Interface(fn=greet, inputs=gr.Audio(source = 'microphone', type = 'filepath'), outputs="text")
+demo = gr.Interface(
+    fn=greet,
+    inputs=gr.Audio(sources=["microphone"], type="filepath"),
+    outputs="text"
+)
 
 demo.launch()
