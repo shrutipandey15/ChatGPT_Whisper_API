@@ -1,6 +1,5 @@
 from flask import Flask, request, jsonify
 import openai
-import base64
 import tempfile
 import os
 
@@ -17,16 +16,17 @@ def health_check():
 @app.route("/transcribe-chat", methods=["POST"])
 def transcribe_chat():
     global messages
-    data = request.get_json()
 
-    if not data or 'audio_base64' not in data:
-        return jsonify({"error": "Missing audio_base64 field."}), 400
+    if 'audio' not in request.files:
+        return jsonify({"error": "Missing 'audio' file in form data."}), 400
 
-    # Decode audio
-    audio_data = base64.b64decode(data['audio_base64'])
+    audio_file = request.files['audio']
+    if audio_file.filename == "":
+        return jsonify({"error": "Empty audio file received."}), 400
+
+    # Save the uploaded audio file to a temporary location
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
-        tmp.write(audio_data)
-        tmp.flush()
+        audio_file.save(tmp.name)
         audio_path = tmp.name
 
     try:
