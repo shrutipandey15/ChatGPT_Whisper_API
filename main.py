@@ -1,85 +1,64 @@
-import subprocess
+from flask import Flask, request, jsonify
 import openai
-import gradio as gr
-import config
-openai.api_key = config.OPENAI_API_KEY
+import base64
+import tempfile
+import os
 
-messages=[
-            {"role": "system", "content": "You are a helpful assistant."}
-            ]
+# Set your OpenAI key here or via environment variable
+openai.api_key = os.environ.get("OPENAI_API_KEY")
 
-def speech_to_text(audio_file):
-    '''Transcribe an audio file to text using OpenAI's whisper model.
+app = Flask(__name__)
+messages = [{"role": "system", "content": "You are a helpful assistant."}]
 
-    Args:
-        audio (str): Path to the audio file to transcribe.
+@app.route("/", methods=["GET"])
+def health_check():
+    return "Whisper + GPT backend is running."
 
-    Returns:
-        str: The transcribed text.
-
-    '''
-
-    if audio_file is None:
-        return "No audio detected. Please try again."
-
-    with open(audio_file, "rb") as file:
-        transcription = openai.audio.transcriptions.create(
-            model="whisper-1",
-            file=file
-        )
-
-    return transcription.text
-
-def query_ChatGPT(messages):
-    '''Send messages to OpenAI's Chat GPT-3 model and get response.
-
-    Args:
-        messages (list): A list of messages to send to the model.
-
-    Returns:
-        str: The response message from the model.
-
-    '''
-    response = openai.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=messages
-        )
-    response_message = response['choices'][0]['message']['content']
-    return response_message
-
-def create_chat_transcript(messages):
-    '''Create a chat transcript from all non-system messages.
-
-    Args:
-        messages (list): A list of messages, where each message is a dictionary
-            with keys 'role' and 'content'.
-
-    Returns:
-        str: The chat transcript, where each message is formatted as
-            "<role>: <content>\n\n".
-
-    '''
-    chat_transcript = ''
-    for message in messages:
-        if message['role'] != 'system':
-            chat_transcript += f"{message['role']}: {message['content']} \n\n"
-    return chat_transcript
-
-def greet(audio):
+@app.route("/transcribe-chat", methods=["POST"])
+def transcribe_chat():
     global messages
-    transcript = speech_to_text(audio)
-    messages.append({"role": "user", "content": transcript})
-    response = query_ChatGPT(messages)
-    subprocess.call(["say", response])
-    messages.append({"role": "assistant", "content": response})
-    chat_transcript = create_chat_transcript(messages)
+    data = request.get_json()
 
-    return chat_transcript
+    if not data or 'audio_base64' not in data:
+        return jsonify({"error": "Missing audio_base64 field."}), 400
 
-demo = gr.Interface(
-    fn=greet,
-    inputs=gr.Audio(sources=["microphone"], type="filepath"),
-    outputs="text"
-)
+    # Decode audio
+    audio_data = base64.b64decode(data['audio_base64'])
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+        tmp.write(audio_data)
+        tmp.flush()
+        audio_path = tmp.name
 
-demo.launch()
+    try:
+        # Transcribe with Whisper
+        with open(audio_path, "rb") as file:
+            transcription = openai.audio.transcriptions.create(
+                model="whisper-1",
+                file=file
+            )
+        user_input = transcription.text
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    finally:
+        os.remove(audio_path)
+
+    # ChatGPT response
+    messages.append({"role": "user", "content": user_input})
+    try:
+        response = openai.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=messages
+        )
+        assistant_reply = response.choices[0].message.content
+        messages.append({"role": "assistant", "content": assistant_reply})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    return jsonify({
+        "user": user_input,
+        "assistant": assistant_reply
+    })
+
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
